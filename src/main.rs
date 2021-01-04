@@ -3,10 +3,10 @@ use bevy::render::pass::ClearColor;
 use rand::prelude::random;
 use std::time::Duration;
 
-const ARENA_WIDTH: u32 = 10;
-const ARENA_HEIGHT: u32 = 10;
+const ARENA_WIDTH: u32 = 20;
+const ARENA_HEIGHT: u32 = 20;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Direction {
     Left,
     Right,
@@ -69,6 +69,8 @@ struct GameOverEvent;
 struct SnekSegments(Vec<Entity>);
 #[derive(Default)]
 struct LastTailPosition(Option<Position>);
+#[derive(Default)]
+struct PreviousDirection(Option<Direction>);
 
 fn setup(commands: &mut Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
     commands.spawn(Camera2dBundle::default());
@@ -112,14 +114,14 @@ fn spawn_snek(
                 direction: Direction::Up,
             })
             .with(SnekSegment)
-            .with(Position { x: 3, y: 3 })
+            .with(Position { x: 10, y: 6 })
             .with(Size::square(0.9))
             .current_entity()
             .unwrap(),
         spawn_segment(
             commands,
             &materials.segment_material,
-            Position { x: 3, y: 2 },
+            Position { x: 10, y: 5 },
         ),
     ]
 }
@@ -129,6 +131,7 @@ fn snek_movement(
     snek_timer: ResMut<SnekMoveTimer>,
     segments: ResMut<SnekSegments>,
     mut last_tail_position: ResMut<LastTailPosition>,
+    mut previous_direction: ResMut<PreviousDirection>,
     mut game_over_events: ResMut<Events<GameOverEvent>>,
     mut heads: Query<(Entity, &mut SnekHead)>,
     mut positions: Query<&mut Position>,
@@ -153,8 +156,12 @@ fn snek_movement(
             head.direction
         };
 
+        
         if direction != head.direction.opposite() {
-            head.direction = direction;
+            let maybe_dir  = previous_direction.0;
+            if maybe_dir.is_some() && maybe_dir.unwrap() != direction {
+                head.direction = direction;                   
+            }
         }
 
         if !snek_timer.0.finished() {
@@ -194,6 +201,7 @@ fn snek_movement(
             .for_each(|(position, segment)| *positions.get_mut(*segment).unwrap() = *position);
 
         last_tail_position.0 = Some(*segment_positions.last().unwrap());
+        previous_direction.0 = Some(head.direction.clone());
     }
 }
 
@@ -268,20 +276,30 @@ fn food_spawner(
     commands: &mut Commands,
     materials: Res<Materials>,
     time: Res<Time>,
+    segment_positions_res: Query<&Position, With<SnekSegment>>,
+    foods: Query<Entity, With<Food>>,
     mut timer: Local<FoodSpawnerTimer>,
 ) {
     if timer.0.tick(time.delta_seconds()).finished() {
-        commands
+        let position: Position = Position {
+            x: (random::<f32>() * ARENA_WIDTH as f32) as i32,
+            y: (random::<f32>() * ARENA_HEIGHT as f32) as i32,
+        };
+        
+        let segment_positions = segment_positions_res.iter().map(|position| position.clone()).collect::<Vec<Position>>();
+        let count= foods.iter().collect::<Vec<Entity>>().len();
+
+        if !segment_positions.contains(&position) && count <= 4 {
+            commands
             .spawn(SpriteBundle {
                 material: materials.food_material.clone(),
                 ..Default::default()
             })
             .with(Food)
-            .with(Position {
-                x: (random::<f32>() * ARENA_WIDTH as f32) as i32,
-                y: (random::<f32>() * ARENA_HEIGHT as f32) as i32,
-            })
+            .with(position)
             .with(Size::square(0.75));
+        }
+        
     }
 }
 
@@ -321,6 +339,7 @@ fn main() {
         )))
         .add_resource(SnekSegments::default())
         .add_resource(LastTailPosition::default())
+        .add_resource(PreviousDirection::default())
         .add_event::<GrowthEvent>()
         .add_event::<GameOverEvent>()
         .add_startup_system(setup.system())
